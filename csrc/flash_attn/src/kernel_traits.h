@@ -339,6 +339,19 @@ struct Flash_bwd_kernel_traits : public Base {
                                Stride<_32, _1>>{},
                         Layout<Shape < _1, _1>>{}));  // Val layout, 1 val per store
 
+
+    using GmemTiledCopydKaccumAtomicAdd = decltype(
+        make_tiled_copy(Copy_Atom<AutoVectorizingCopyWithAssumedAlignment<128>, ElementAccum>{},
+                        Layout<Shape <_8, _32>,  // Thread layout, 8 threads per row
+                               Stride<_32, _1>>{},
+                        Layout<Shape < _1, _1>>{}));  // Val layout, 1 val per store
+
+    using GmemTiledCopydVaccumAtomicAdd = decltype(
+        make_tiled_copy(Copy_Atom<AutoVectorizingCopyWithAssumedAlignment<128>, ElementAccum>{},
+                        Layout<Shape <_8, _32>,  // Thread layout, 8 threads per row
+                               Stride<_32, _1>>{},
+                        Layout<Shape < _1, _1>>{}));  // Val layout, 1 val per store
+
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

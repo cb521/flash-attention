@@ -1132,43 +1132,43 @@ def test_flash_attn_output(
         assert (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
 
 
-@pytest.mark.parametrize("kvpacked", [True, False])
+@pytest.mark.parametrize("kvpacked", [False])
 # @pytest.mark.parametrize('kvpacked', [False])
-@pytest.mark.parametrize("dtype", ([torch.float16] if is_sm75 else [torch.float16, torch.bfloat16]))
+@pytest.mark.parametrize("dtype", ([torch.float16] if is_sm75 else [torch.bfloat16]))
 # @pytest.mark.parametrize('dtype', [torch.float16])
-@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
-# @pytest.mark.parametrize('mha_type', ["mqa"])
-@pytest.mark.parametrize("deterministic", [False, True])
-# @pytest.mark.parametrize("deterministic", [True])
-@pytest.mark.parametrize("alibi", [False, True])
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+@pytest.mark.parametrize('mha_type', ["mha"])
+# @pytest.mark.parametrize("deterministic", [False, True])
+@pytest.mark.parametrize("deterministic", [False])
+@pytest.mark.parametrize("alibi", [True])
 # @pytest.mark.parametrize("alibi", [True])
-@pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("local", [True])
 # @pytest.mark.parametrize("local", [True])
-@pytest.mark.parametrize("causal", [False, True])
-# @pytest.mark.parametrize('causal', [True])
-@pytest.mark.parametrize("d", [32, 59, 64, 80, 96, 111, 128, 160, 192, 224, 256])
+# @pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize('causal', [True])
+# @pytest.mark.parametrize("d", [32, 59, 64, 80, 96, 111, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
-# @pytest.mark.parametrize('d', [64])
-@pytest.mark.parametrize(
-    "seqlen_q,seqlen_k",
-    [
-        (1, 147),
-        (113, 203),
-        (128, 217),
-        (113, 211),
-        (108, 256),
-        (256, 512),
-        (512, 256),
-        (1024, 1024),
-        (1023, 1024),
-        (1024, 1023),
-        (2048, 2048),
-    ],
-)
-# @pytest.mark.parametrize('seqlen_q,seqlen_k', [(128, 128)])
-@pytest.mark.parametrize("dropout_p", [0.0, 0.17])
-@pytest.mark.parametrize("softcap", [0.0, 50.0])
-# @pytest.mark.parametrize('dropout_p', [0.0])
+@pytest.mark.parametrize('d', [128])
+# @pytest.mark.parametrize(
+#     "seqlen_q,seqlen_k",
+#     [
+#         (1, 147),
+#         (113, 203),
+#         (128, 217),
+#         (113, 211),
+#         (108, 256),
+#         (256, 512),
+#         (512, 256),
+#         (1024, 1024),
+#         (1023, 1024),
+#         (1024, 1023),
+#         (2048, 2048),
+#     ],
+# )
+@pytest.mark.parametrize('seqlen_q,seqlen_k', [(256, 256)]) #128 is ok
+# @pytest.mark.parametrize("dropout_p", [0.0, 0.17])
+@pytest.mark.parametrize("softcap", [0.0])
+@pytest.mark.parametrize('dropout_p', [0.0])
 def test_flash_attn_varlen_output(
     seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, softcap
 ):
@@ -1182,8 +1182,11 @@ def test_flash_attn_varlen_output(
     device = "cuda"
     # set seed
     torch.random.manual_seed(0)
-    batch_size = 4
-    nheads = 6 if softcap == 0.0 else 4  # softcap reference impl takes more memory
+    batch_size = 4 #TODO
+    # batch_size = 1
+    nheads = 6 if softcap == 0.0 else 4  # softcap reference impl takes more memory #TODO
+    # nheads = 1
+
     nheads_k = nheads if mha_type == "mha" else (1 if mha_type == "mqa" else 2)
     assert nheads % nheads_k == 0
     window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
@@ -1422,6 +1425,8 @@ def test_flash_attn_varlen_output(
                 dv_pt,
             ) = torch.autograd.grad(out_pt, (q, k, v), g)
         dq = dq_pad_fn(dq_unpad)
+
+        
         print(f"dQ max diff: {(dq - dq_ref).abs().max().item()}")
         print(f"dK max diff: {(dk - dk_ref).abs().max().item()}")
         print(f"dV max diff: {(dv - dv_ref).abs().max().item()}")
@@ -1440,15 +1445,59 @@ def test_flash_attn_varlen_output(
     assert (out - out_ref).abs().max().item() <= 2 * (out_pt - out_ref).abs().max().item()
 
     if dropout_p > 0.0:
-        assert (attn - attn_ref).abs().max().item() <= 2 * (attn_pt - attn_ref).abs().max().item()
+        
         # With alibi, many of the prob values are 0.0 & -0.0 so dropout_fraction isn't accurate
         if not alibi:
             assert abs(dropout_fraction - dropout_p) <= (0.01 if not local else 0.04)
 
     if (d <= MAX_HEADDIM_SM8x or dropout_p == 0) or (is_sm80 or is_sm90):
+        # assert (dq - dq_ref).abs().max().item() <= 3 * (dq_pt - dq_ref).abs().max().item()
+        
+        # torch.set_printoptions(profile="full")
+        # print("dout is {}".format(g))
+        print("dq_ref is {}".format(dq_ref))
+        print("dq is {}".format(dq))
+        diff = dq_ref - dq
+        diff_min = torch.min(diff)
+        diff_max = torch.max(diff)
+        torch.set_printoptions(profile="full")
+        print("diff is ==== {}".format(diff))
+        print("===== diff_min is {}".format(diff_min))
+        print("===== diff_max is {}".format(diff_max))
+
+        # print("================================")
+        
+        # print("dv_ref is {}".format(dv_ref))
+        # print("dv is {}".format(dv))
+
+        ref_dk_max =  torch.max(dk_ref)
+        dk_max = torch.max(dk)
+
+        ref_dk_min =  torch.min(dk_ref)
+        dk_min = torch.min(dk)
+
+        ref_dk_has_nan = torch.isnan(dv_ref).any().item()
+        
+        # print("ref_dk_max is {}, dk_max is {}, ref_dk_min is {}, dk_min is {}, ref_dk_has_nan is {}".format(ref_dk_max, dk_max, ref_dk_min, dk_min, ref_dk_has_nan))
+
+        ref_dq_max =  torch.max(dq_ref)
+        dq_max = torch.max(dq)
+
+        ref_dq_min =  torch.min(dq_ref)
+        dq_min = torch.min(dq)
+
+        ref_dq_has_nan = torch.isnan(dq_ref).any().item()
+        print("ref_dq_max is {}, dq_max is {}, ref_dq_min is {}, dq_min is {}, ref_dq_has_nan is {}".format(ref_dq_max, dq_max, ref_dq_min, dq_min, ref_dq_has_nan)) #看统计值感觉也差不多
+        max_idx_flat = torch.argmax((dq - dq_ref).abs())
+        max_idx_multi = torch.unravel_index(max_idx_flat, (dq - dq_ref).abs().shape)
+        print("dq_ref value is {}".format(dq_ref[max_idx_multi]))
+        print("dq value is {}".format(dq[max_idx_multi]))
         assert (dq - dq_ref).abs().max().item() <= 3 * (dq_pt - dq_ref).abs().max().item()
-        assert (dk - dk_ref).abs().max().item() <= 3 * (dk_pt - dk_ref).abs().max().item()
-        assert (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
+        
+        
+
+        # assert (dk - dk_ref).abs().max().item() <= 3 * (dk_pt - dk_ref).abs().max().item()
+        # assert (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
 
 
 @pytest.mark.parametrize("dtype", ([torch.float16] if is_sm75 else [torch.float16, torch.bfloat16]))

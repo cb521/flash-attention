@@ -78,8 +78,8 @@ inline __device__ void compute_dot_do_o(const Params &params) {
         + m_block * kBlockM * params.do_row_stride + bidh * params.do_head_stride;
     const index_t row_offset_o = binfo.q_offset(params.o_batch_stride, params.o_row_stride, bidb)
         + m_block * kBlockM * params.o_row_stride + bidh * params.o_head_stride;
-    const index_t row_offset_dq_accum = binfo.q_offset(params.seqlen_q_rounded * params.h * params.d_rounded, params.h * params.d_rounded, bidb)
-        + (m_block * kBlockM + (params.cu_seqlens_q == nullptr ? 0 : 128ll * bidb)) * params.h * params.d_rounded + bidh * params.d_rounded;
+    // const index_t row_offset_dq_accum = binfo.q_offset(params.seqlen_q_rounded * params.h * params.d_rounded, params.h * params.d_rounded, bidb)
+    //     + (m_block * kBlockM + (params.cu_seqlens_q == nullptr ? 0 : 128ll * bidb)) * params.h * params.d_rounded + bidh * params.d_rounded;
     // Regarding 128 * params.b see a comment in mha_varlen_bwd about padding of dq_accum and softmax_d
     const index_t row_offset_dpsum = (params.unpadded_lse ? (bidh * (params.total_q + 128 * params.b) + binfo.q_offset(params.seqlen_q_rounded, 1, bidb) + 128 * bidb): (bidb * params.h + bidh) * params.seqlen_q_rounded) + m_block * kBlockM;
 
@@ -89,9 +89,9 @@ inline __device__ void compute_dot_do_o(const Params &params) {
     Tensor gO = make_tensor(make_gmem_ptr(reinterpret_cast<Element *>(params.o_ptr) + row_offset_o),
                             Shape<Int<kBlockM>, Int<kHeadDim>>{},
                             make_stride(params.o_row_stride, _1{}));
-    Tensor gdQaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.dq_accum_ptr) + row_offset_dq_accum),
-                                  Shape<Int<kBlockM>, Int<kHeadDim>>{},
-                                  make_stride(params.h * params.d_rounded, _1{}));
+    // Tensor gdQaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.dq_accum_ptr) + row_offset_dq_accum),
+    //                               Shape<Int<kBlockM>, Int<kHeadDim>>{},
+    //                               make_stride(params.h * params.d_rounded, _1{}));
     Tensor dP_sum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.dsoftmax_sum) + row_offset_dpsum),
                                 Shape<Int<kBlockM>>{}, Stride<_1>{});
 
@@ -104,7 +104,7 @@ inline __device__ void compute_dot_do_o(const Params &params) {
 
     Tensor tdOgdO = gmem_thr_copy_dO.partition_S(gdO);
     Tensor tdOgO = gmem_thr_copy_dO.partition_S(gO);
-    Tensor tdQgdQaccum = gmem_thr_copy_dQaccum.partition_D(gdQaccum);
+    // Tensor tdQgdQaccum = gmem_thr_copy_dQaccum.partition_D(gdQaccum);
 
     Tensor cdO = make_identity_tensor(Shape<Int<kBlockM>, Int<kHeadDim>>{});    // (BLK_M,BLK_K) -> (blk_m,blk_k)
     Tensor tdOcdO = gmem_thr_copy_dO.partition_S(cdO);
@@ -128,13 +128,13 @@ inline __device__ void compute_dot_do_o(const Params &params) {
     // so that (dP - dP_sum) is on the same scale.
     dot_do_o<Kernel_traits::kGmemThreadsPerRow>(tdOrdO, tdOrO, dP_sum,
                                                 Kernel_traits::kNThreads / (Kernel_traits::kGmemThreadsPerRow), params.p_dropout);
-    if (Clear_dQaccum) {
-        // We're actually not zero'ing out all of dQaccum, but only the part that we're going to
-        // do atomicAdds on.
-        Tensor zero = make_fragment_like(tdQgdQaccum);
-        clear(zero);
-        cute::copy(gmem_tiled_copy_dQaccum, zero, tdQgdQaccum);
-    }
+    // if (Clear_dQaccum) {
+    //     // We're actually not zero'ing out all of dQaccum, but only the part that we're going to
+    //     // do atomicAdds on.
+    //     Tensor zero = make_fragment_like(tdQgdQaccum);
+    //     clear(zero);
+    //     cute::copy(gmem_tiled_copy_dQaccum, zero, tdQgdQaccum);
+    // }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -347,7 +347,7 @@ inline __device__ void convert_dKV(const Params &params) {
     }
     #pragma unroll
     for (int i = 0; i < size(acc_dv); ++i) {
-        acc_dv(i) = tdVrdVaccum(i) * params.rp_dropout;
+        acc_dv(i) = tdVrdVaccum(i) * params.rp_dropout;//TODO: do we need the "if (Is_dropout) " 
     }
     // Convert acc_dk from fp32 to fp16
     Tensor rdK = FLASH_NAMESPACE::convert_type<Element>(acc_dk);

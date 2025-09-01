@@ -182,6 +182,8 @@ struct Flash_bwd_params : public Flash_fwd_params {
 
     bool deterministic;
     index_t dq_accum_split_stride;
+    index_t dk_accum_split_stride;
+    index_t dv_accum_split_stride;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

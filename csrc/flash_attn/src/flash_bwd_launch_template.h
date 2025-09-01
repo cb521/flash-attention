@@ -81,11 +81,8 @@ void run_flash_bwd_seqk_parallel(Flash_bwd_params &params, cudaStream_t stream) 
     }
     dim3 grid_n(gridDimx, params.b, params.h);
 
-    if (!params.deterministic) {
-        flash_bwd_dot_do_o_kernel<true, Kernel_traits><<<grid_m, Kernel_traits::kNThreads, 0, stream>>>(params);
-    } else {
-        flash_bwd_dot_do_o_kernel<false, Kernel_traits><<<grid_m, Kernel_traits::kNThreads, 0, stream>>>(params);
-    }
+    flash_bwd_dot_do_o_kernel<false, Kernel_traits><<<grid_m, Kernel_traits::kNThreads, 0, stream>>>(params);//No clear dq_accm anymore
+    flash_bwd_clear_dkvaccum_kernel<Kernel_traits><<<grid_n, Kernel_traits::kNThreads, 0, stream>>>(params);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
     // We want to specialize to is_even_MN and not just is_even_M, since in the case where N is not
@@ -108,7 +105,7 @@ void run_flash_bwd_seqk_parallel(Flash_bwd_params &params, cudaStream_t stream) 
                             C10_CUDA_CHECK(cudaFuncSetAttribute(
                                 kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size_dq_dk_dv));
                         }
-                        kernel<<<grid_n, Kernel_traits::kNThreads, smem_size_dq_dk_dv, stream>>>(params);
+                        kernel<<<grid_m, Kernel_traits::kNThreads, smem_size_dq_dk_dv, stream>>>(params);
                         C10_CUDA_KERNEL_LAUNCH_CHECK();
                     });
                 });
@@ -116,12 +113,13 @@ void run_flash_bwd_seqk_parallel(Flash_bwd_params &params, cudaStream_t stream) 
         });
     });
 
-    auto kernel_dq = &flash_bwd_convert_dq_kernel<Kernel_traits>;
-    if (Kernel_traits::kSmemdQSize >= 48 * 1024)  {
+    auto kernel_dkv = &flash_bwd_convert_dkv_kernel<Kernel_traits>;
+    if (Kernel_traits::kSmemKVSize >= 48 * 1024)  {
         C10_CUDA_CHECK(cudaFuncSetAttribute(
-            kernel_dq, cudaFuncAttributeMaxDynamicSharedMemorySize, Kernel_traits::kSmemdQSize));
+            kernel_dkv, cudaFuncAttributeMaxDynamicSharedMemorySize, Kernel_traits::kSmemKVSize));
     }
-    kernel_dq<<<grid_m, Kernel_traits::kNThreads, Kernel_traits::kSmemdQSize, stream>>>(params, !params.deterministic ? 1 : gridDimx);
+    kernel_dkv<<<grid_n, Kernel_traits::kNThreads, Kernel_traits::kSmemKVSize, stream>>>(params);
+    
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
