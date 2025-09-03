@@ -102,8 +102,9 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     if (m_block * kBlockM >= binfo.actual_seqlen_q) return;
 
     int n_block_max = cute::ceil_div(binfo.actual_seqlen_k, kBlockN);
-    if (Is_local) {
-        n_block_max = std::min(n_block_max, cute::ceil_div((m_block + 1) * kBlockM + binfo.actual_seqlen_k - binfo.actual_seqlen_q + params.window_size_right, kBlockN));
+    if (Is_causal || Is_local) {
+        n_block_max = std::min(n_block_max,
+                               cute::ceil_div((m_block + 1) * kBlockM + binfo.actual_seqlen_k - binfo.actual_seqlen_q + params.window_size_right, kBlockN));
     }
 
     const index_t row_offset_q = binfo.q_offset(params.q_batch_stride, params.q_row_stride, bidb)
@@ -340,7 +341,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
 
     // Prologue
 
-        // We'll advance gdKs s and gdQaccum before the 1st read/write.
+    // We'll advance gdKs s and gdQaccum before the 1st read/write.
     tdKgdK.data() = tdKgdK.data() + kBlockN * params.dk_row_stride;
     tdKgdKaccum.data() = tdKgdKaccum.data() + kBlockN * params.h * params.d_rounded;
 
@@ -348,9 +349,8 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     tdVgdVaccum.data() = tdVgdVaccum.data() + kBlockN * params.h * params.d_rounded;
 
     int n_block = n_block_max - 1;
-    int n_block_min = (!Is_causal && !Is_local)
-        ? 0
-        : std::max(0, (m_block * kBlockM + binfo.actual_seqlen_k - binfo.actual_seqlen_q - params.window_size_left) / kBlockN);
+    int n_block_min = !Is_local ? 0 : std::max(0, (m_block * kBlockM + binfo.actual_seqlen_k - binfo.actual_seqlen_q - params.window_size_left) / kBlockN);
+
     // If not local, we're guaranteed that m_block_min <= m_block:
     // We checked earlier that n_block * kBlockN < actual_seqlen_k, so in the causal case,
     // n_block * kBlockN + binfo.actual_seqlen_q - binfo.actual_seqlen_k < actual_seqlen_q.
@@ -398,7 +398,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
 
     if ((!Is_first && !Seq_parallel) || params.deterministic) { __syncthreads(); }
 
-    if (Kernel_traits::Is_V_in_regs) {
+    if (Kernel_traits::Is_V_in_regs) { // TODO: replace it to Is_dO_in_regs or delete it simply
         // Clear the smem tiles to account for predicated off loads
         FLASH_NAMESPACE::copy<Is_even_MN, Is_even_K, /*Clear_OOB_MN=*/true>(
             gmem_tiled_copy_QKV, tVgV, tVsV, tKVcKV, tKVpKV, binfo.actual_seqlen_k - n_block * kBlockN
@@ -455,7 +455,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
     FLASH_NAMESPACE::copy<Is_even_MN, Is_even_K, /*Clear_OOB_MN=*/true>(
         gmem_tiled_copy_QKV, tKgK, tKsK, tKVcKV, tKVpKV, binfo.actual_seqlen_k - n_block * kBlockN
     );
-    if (!Kernel_traits::Is_V_in_regs) {
+    if (!Kernel_traits::Is_V_in_regs) { // TODO: replace it to Is_dO_in_regs
         FLASH_NAMESPACE::copy<Is_even_MN, Is_even_K, /*Clear_OOB_MN=*/true>(
             gmem_tiled_copy_QKV, tVgV, tVsV, tKVcKV, tKVpKV, binfo.actual_seqlen_k - n_block * kBlockN
         );
@@ -469,7 +469,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
                                                     Kernel_traits::kNThreads / (Kernel_traits::kGmemThreadsPerRow), params.p_dropout);
     }
 
-    if (Kernel_traits::Is_V_in_regs) {
+    if (Kernel_traits::Is_V_in_regs) { // TODO: replace it to Is_dO_in_regs
         cute::cp_async_wait<1>();
         __syncthreads();
         Tensor tdPrV_copy_view = smem_thr_copy_KV.retile_D(tdPrV);
@@ -600,7 +600,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
         // }
 
         // if (cute::thread0()) { print(dP_sum); }
-
+        // TODO: replace it to Is_dO_in_regs in A_in_regs, and B_in_regs is false
         FLASH_NAMESPACE::gemm</*A_in_regs=*/false, /*B_in_regs=*/Kernel_traits::Is_V_in_regs>(
             acc_dp, tdPrdO, tdPrV, tdPsdO, tdPsV, tiled_mma_sdp,
             smem_tiled_copy_QdO, smem_tiled_copy_KV, smem_thr_copy_QdO, smem_thr_copy_KV
@@ -624,6 +624,7 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
 
         //G2S next V tile
         if(n_block > n_block_min) {
+            __syncthreads(); // to avoid race condition
             tVgV.data() = tVgV.data() + (-int(kBlockN * params.v_row_stride));
             FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV, tVgV, tVsV, tKVcKV, tKVpKV);
             FLASH_NAMESPACE::cp_async_fence();
@@ -701,8 +702,8 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
                 for (int i = 0; i < size(acc_dk); ++i) { atomicAdd(&tdKgdKaccum(i), acc_dk(i)); }
             }
         } // we don't need the else condition for now
-
         if(n_block > n_block_min) {
+            __syncthreads(); // to avoid race condition
             tKgK.data() = tKgK.data() + (-int(kBlockN * params.k_row_stride));
             FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_QKV, tKgK, tKsK, tKVcKV, tKVpKV);
             FLASH_NAMESPACE::cp_async_fence();
