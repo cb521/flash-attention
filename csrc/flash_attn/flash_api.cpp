@@ -129,8 +129,6 @@ void set_params_fprop(Flash_fwd_params &params,
     params.p_dropout_in_uint8_t = uint8_t(std::floor(params.p_dropout * 255.0));
     params.rp_dropout = 1.f / params.p_dropout;
     params.scale_softmax_rp_dropout = params.rp_dropout * params.scale_softmax;
-    std::cout << "==================== enter here ==================" << std::endl;
-    std::cout << "params.rp_dropout is: " << params.rp_dropout << "params.scale_softmax is: " << params.scale_softmax << "params.scale_softmax_rp_dropout: " << params.scale_softmax_rp_dropout << std::endl; 
     TORCH_CHECK(p_dropout < 1.f);
     #ifdef FLASHATTENTION_DISABLE_DROPOUT
         TORCH_CHECK(p_dropout == 0.0f, "This flash attention build does not support dropout.");
@@ -1101,28 +1099,28 @@ mha_varlen_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
     auto opts = q.options();
     auto softmax_d = torch::empty({num_heads, total_q + 128 * batch_size}, opts.dtype(at::kFloat));
     // at::Tensor dq_accum;
-    at::Tensor dk_accum, dv_accum;
-    if (loop) {
-        // We don't want to allocate dq_accum of size (batch, seqlen_q_rounded, num_heads, head_size_rounded)
-        // because that would be too large if there is a very long sequence and the rest of the sequences are short.
-        // Instead, we allocate dq_accum of size (total_q + 128 * batch, num_heads, head_size_rounded).
-        // Note that 128 is the max block size on the seqlen_q dimension.
-        // For dQ, the i-th sequence is stored in indices from cu_seqlens[i] + 128 * i to
-        // cu_seqlens[i + 1] * 128 * i - 1. This ensures that the i-th sequence and (i + 1)-th sequence will
-        // be at least 128 apart. It's ok for us to do atomicAdds up to 128 rows beyond what we're normally
-        // allowed to do. So we won't have to do any bound checking, and performance should stay the same.
-        // Same holds for softmax_d, since LSE is stored in unpadded format.
-        if (!deterministic) {
-            // dq_accum = torch::empty({total_q + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
-            dk_accum = torch::empty({total_k + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
-            dv_accum = torch::empty({total_k + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
-        } else {
-            const int nsplits = (get_num_sm(get_current_device()) + batch_size * num_heads - 1) / (batch_size * num_heads);
-            // dq_accum = torch::zeros({nsplits, total_q + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
-            dk_accum = torch::zeros({nsplits, total_k + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
-            dv_accum = torch::zeros({nsplits, total_k + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
-        }
-    }
+    at::Tensor dk_accum, dv_accum;//mark
+    // if (loop) { //as the seq_q is small, so we don't need dk_accum & dv_accum
+    //     // We don't want to allocate dq_accum of size (batch, seqlen_q_rounded, num_heads, head_size_rounded)
+    //     // because that would be too large if there is a very long sequence and the rest of the sequences are short.
+    //     // Instead, we allocate dq_accum of size (total_q + 128 * batch, num_heads, head_size_rounded).
+    //     // Note that 128 is the max block size on the seqlen_q dimension.
+    //     // For dQ, the i-th sequence is stored in indices from cu_seqlens[i] + 128 * i to
+    //     // cu_seqlens[i + 1] * 128 * i - 1. This ensures that the i-th sequence and (i + 1)-th sequence will
+    //     // be at least 128 apart. It's ok for us to do atomicAdds up to 128 rows beyond what we're normally
+    //     // allowed to do. So we won't have to do any bound checking, and performance should stay the same.
+    //     // Same holds for softmax_d, since LSE is stored in unpadded format.
+    //     if (!deterministic) {
+    //         // dq_accum = torch::empty({total_q + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
+    //         dk_accum = torch::empty({total_k + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
+    //         dv_accum = torch::empty({total_k + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
+    //     } else {
+    //         const int nsplits = (get_num_sm(get_current_device()) + batch_size * num_heads - 1) / (batch_size * num_heads);
+    //         // dq_accum = torch::zeros({nsplits, total_q + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
+    //         dk_accum = torch::zeros({nsplits, total_k + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
+    //         dv_accum = torch::zeros({nsplits, total_k + 128 * batch_size, num_heads, head_size_rounded}, opts.dtype(at::kFloat));
+    //     }
+    // }
 
     at::Tensor dk_expanded, dv_expanded;
     if (num_heads_k != num_heads) {  // MQA / GQA
@@ -1153,8 +1151,8 @@ mha_varlen_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
                      cu_seqlens_q.data_ptr(),
                      cu_seqlens_k.data_ptr(),
                      nullptr,//loop ? dq_accum.data_ptr() : nullptr
-                     loop ? dk_accum.data_ptr() : nullptr, //nullptr
-                     loop ? dv_accum.data_ptr() : nullptr, //nullptr
+                     nullptr, //nullptr //mark loop ? dk_accum.data_ptr() : nullptr
+                     nullptr, //nullptr //loop ? dv_accum.data_ptr() : nullptr
                      softmax_lse.data_ptr(),
                      softmax_d.data_ptr(),
                      p_dropout,
@@ -1164,9 +1162,9 @@ mha_varlen_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
                      softcap,
                      deterministic,
                      /*unpadded_lse*/true);
-    // params.dq_accum_split_stride = !deterministic ? 0 : dq_accum.stride(0);
-    params.dk_accum_split_stride = !deterministic ? 0 : dk_accum.stride(0);
-    params.dv_accum_split_stride = !deterministic ? 0 : dv_accum.stride(0);
+    // params.dq_accum_split_stride = !deterministic ? 0 : dq_accum.stride(0); 
+    // params.dk_accum_split_stride = !deterministic ? 0 : dk_accum.stride(0);//mark
+    // params.dv_accum_split_stride = !deterministic ? 0 : dv_accum.stride(0);
     params.total_q = total_q;
 
     auto launch = &run_mha_bwd;

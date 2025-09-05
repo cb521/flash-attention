@@ -1148,12 +1148,13 @@ def test_flash_attn_output(
 # @pytest.mark.parametrize('causal', [True])
 # @pytest.mark.parametrize("d", [32, 59, 64, 80, 96, 111, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
-@pytest.mark.parametrize('d', [128, 256])
+@pytest.mark.parametrize('d', [32, 128]) #128, 256
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
         (1, 147),
-        (113, 203),
+        (3, 203),
+        # (6, 2048),
         (128, 217),
         (113, 211),
         (108, 256),
@@ -1487,17 +1488,18 @@ def test_flash_attn_varlen_output(
         dq_min = torch.min(dq)
 
         ref_dq_has_nan = torch.isnan(dq_ref).any().item()
-        print("ref_dq_max is {}, dq_max is {}, ref_dq_min is {}, dq_min is {}, ref_dq_has_nan is {}".format(ref_dq_max, dq_max, ref_dq_min, dq_min, ref_dq_has_nan)) #看统计值感觉也差不多
+        # print("ref_dq_max is {}, dq_max is {}, ref_dq_min is {}, dq_min is {}, ref_dq_has_nan is {}".format(ref_dq_max, dq_max, ref_dq_min, dq_min, ref_dq_has_nan)) #看统计值感觉也差不多
         max_idx_flat = torch.argmax((dq - dq_ref).abs())
         max_idx_multi = torch.unravel_index(max_idx_flat, (dq - dq_ref).abs().shape)
-        print("dq_ref value is {}".format(dq_ref[max_idx_multi]))
-        print("dq value is {}".format(dq[max_idx_multi]))
+        # print("dq_ref value is {}".format(dq_ref[max_idx_multi]))
+        # print("dq value is {}".format(dq[max_idx_multi]))
         assert (dq - dq_ref).abs().max().item() <= 3 * (dq_pt - dq_ref).abs().max().item()
         
         
-
-        # assert (dk - dk_ref).abs().max().item() <= 3 * (dk_pt - dk_ref).abs().max().item()
-        # assert (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
+        # print("dk is {}".format(dk))
+        # print("dk_ref is {}".format(dk_ref))
+        assert (dk - dk_ref).abs().max().item() <= 3 * (dk_pt - dk_ref).abs().max().item()
+        assert (dv - dv_ref).abs().max().item() <= 3 * (dv_pt - dv_ref).abs().max().item()
 
 
 @pytest.mark.parametrize("dtype", ([torch.float16] if is_sm75 else [torch.float16, torch.bfloat16]))
@@ -2506,6 +2508,7 @@ def test_flash_attn_deterministic(seqlen_q, seqlen_k, swap_sq_sk, d, causal, loc
     [
         (1, 239),
         (3, 799),
+        (6, 1024),
         (127, 512),
         (127, 513),
         (113, 203),
@@ -2572,3 +2575,136 @@ def test_flash_attn_varlen_deterministic(seqlen_q, seqlen_k, swap_sq_sk, d, caus
         assert torch.equal(dv, dv0)
         assert torch.equal(dk, dk0)
         assert torch.equal(dq, dq0)
+
+
+BATCH_SIZE = 320
+D_MODEL = 1536
+Q_SEQLEN = 3
+KV_SEQLEN = 3058
+COMPRESS_RATE = 2
+N_HEAD = 16
+HEAD_DIM = 96
+DROPOUT = 0.0
+
+def gen_one_batch(
+    batch_size: int, d_model: int, q_seqlen: int, kv_seqlen: int, compress_rate: int
+) -> dict:
+    # 这里的压缩率实际上是动态的，平均压缩率为 2, Q 的 seqlen 长度不是规则的，
+    # 为了方便表示，设置压缩率为2，固定 Q 的 seqlen 为 6
+    compress_batch_size = batch_size // compress_rate
+    q = torch.rand((batch_size, q_seqlen, d_model), dtype=torch.bfloat16).cuda()
+    kv = torch.rand((compress_batch_size, kv_seqlen, d_model), dtype=torch.bfloat16).cuda()
+    q_cuseqlen = (
+        torch.arange(compress_batch_size + 1, dtype=torch.int32)
+        * q_seqlen
+        * compress_rate
+    ).cuda()
+    kv_cuseqlen = (torch.arange(compress_batch_size + 1, dtype=torch.int32) * kv_seqlen).cuda()
+    max_q_seq_len = compress_rate * q_seqlen
+    max_kv_seq_len = kv_seqlen
+    return {
+        "q": q,
+        "kv": kv,
+        "q_cuseqlen": q_cuseqlen,
+        "kv_cuseqlen": kv_cuseqlen,
+        "max_q_seq_len": max_q_seq_len,
+        "max_kv_seq_len": max_kv_seq_len,
+    }
+
+def latancy_test():
+    out = None
+    out = gen_one_batch(BATCH_SIZE, D_MODEL, Q_SEQLEN, KV_SEQLEN, COMPRESS_RATE)
+    q = out["q"]
+    q = q.view(q.size(0), q.size(1), N_HEAD, HEAD_DIM)  #
+    q_cuseqlen = out["q_cuseqlen"]
+    kv_cuseqlen = out["kv_cuseqlen"]
+    max_q_seq_len = out["max_q_seq_len"]
+    max_kv_seq_len = out["max_kv_seq_len"]
+    k = out["kv"]
+    v = out["kv"]
+
+    print("q is {}".format(q.shape))
+    print("k is {}".format(k.shape))
+    print("max_q_seq_len is {}".format(max_q_seq_len))
+    print("max_kv_seq_len is {}".format(max_kv_seq_len))
+    print("q_cuseqlen is {}".format(q_cuseqlen))
+    print("q_cuseqlen len is {}".format(len(q_cuseqlen)))
+    print("kv_cuseqlen is {}".format(kv_cuseqlen))
+    print("kv_cuseqlen len is {}".format(len(kv_cuseqlen)))
+    
+
+    q_bs = q.size(0)
+    q_seqlen = q.size(1)
+
+    q = q.view(q_bs * q_seqlen, N_HEAD, HEAD_DIM).requires_grad_()  # (960,16,96)
+    k = k.view(k.size(0) * k.size(1), N_HEAD, HEAD_DIM).requires_grad_()
+    v = v.view(v.size(0) * v.size(1), N_HEAD, HEAD_DIM).requires_grad_()
+
+    fwd_event_start = torch.cuda.Event(enable_timing=True)
+    fwd_event_stop = torch.cuda.Event(enable_timing=True)
+    torch.cuda.synchronize()
+
+    output_datas = []
+    iterations = 1
+    profiler_step_start = 0
+
+    for i in range(iterations):
+        if i == profiler_step_start:
+            fwd_event_start.record()
+        fwd_out = flash_attn_varlen_func(
+            q,
+            k,
+            v,
+            q_cuseqlen,
+            kv_cuseqlen,
+            max_q_seq_len,
+            max_kv_seq_len,
+            dropout_p=DROPOUT,
+        )
+        output_datas.append(fwd_out)
+    fwd_event_stop.record()
+    torch.cuda.synchronize()
+    fwd_time = fwd_event_start.elapsed_time(fwd_event_stop) / (
+        iterations - profiler_step_start
+    )
+
+    grads = []
+    for i in range(iterations):
+        grad = torch.rand_like(output_datas[i])
+        grads.append(grad)
+    bwd_event_start = torch.cuda.Event(enable_timing=True)
+    bwd_event_stop = torch.cuda.Event(enable_timing=True)
+    torch.cuda.synchronize()
+
+    for i in range(iterations):
+        if i == profiler_step_start:
+            bwd_event_start.record()
+        g = grads[i]
+        fwd_out = output_datas[i]
+        (dq_cross, dk_cross, dv_cross) = torch.autograd.grad(
+            fwd_out, (q, k, v), g, retain_graph=True,)
+        
+    bwd_event_stop.record()
+    torch.cuda.synchronize()
+    bwd_time = bwd_event_start.elapsed_time(bwd_event_stop) / (
+            iterations - profiler_step_start
+    )
+
+    return fwd_time, bwd_time
+
+
+
+
+
+
+
+
+if __name__ == "__main__":
+    fwd_time, bwd_time = latancy_test()
+    print(f"fwd_time: {fwd_time} ms, bwd_time: {bwd_time} ms")
+    
+
+
+    
+
+

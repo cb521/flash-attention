@@ -172,7 +172,7 @@ struct Flash_bwd_kernel_traits : public Base {
     using SmemCopyAtom = typename Base::SmemCopyAtom;
     using SmemCopyAtomTransposed = typename Base::SmemCopyAtomTransposed;
 
-    static constexpr bool Is_V_in_regs = Is_V_in_regs_;
+    static constexpr bool Is_V_in_regs = false; //as we adjust the loop order, we don't need V in regs
     static constexpr bool No_double_buffer = No_double_buffer_;
 
     // The number of threads.
@@ -273,6 +273,7 @@ struct Flash_bwd_kernel_traits : public Base {
         SmemLayoutAtomdQ{},
         make_shape(Int<kBlockM>{}, Int<kHeadDim>{})));
     using SmemCopyAtomdQ = Copy_Atom<AutoVectorizingCopyWithAssumedAlignment<128>, elem_type>;
+    // using SmemCopyAtomdKV = Copy_Atom<AutoVectorizingCopyWithAssumedAlignment<128>, elem_type>;
 
     // Double buffer for sQ
     static constexpr int kSmemQdOSize = size(SmemLayoutQdO{}) * (No_double_buffer ? 2 : 3) * sizeof(Element);
