@@ -206,12 +206,12 @@ void run_mha_fwd_hdim96(Flash_fwd_params &params, cudaStream_t stream) {
         // For sm86 or sm89, 64 x 64 is the fastest for causal (because it's square),
         if (is_sm8x) {
             if constexpr(!Is_causal) {
-                run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 64, 4, false, false, T>, Is_dropout, Is_causal>(params, stream);
+                run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 16, 64, 1, false, false, T>, Is_dropout, Is_causal>(params, stream);
             } else {
-                run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 64, 64, 4, false, false, T>, Is_dropout, Is_causal>(params, stream);
+                run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 16, 64, 1, false, false, T>, Is_dropout, Is_causal>(params, stream);
             }
         } else {
-            run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 64, 4, false, false, T>, Is_dropout, Is_causal>(params, stream);
+            run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 16, 64, 1, false, false, T>, Is_dropout, Is_causal>(params, stream);
         }
         // run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 64, 4, true, false, T>, Is_dropout, Is_causal>(params, stream);
         // run_flash_fwd<Flash_fwd_kernel_traits<Headdim, 128, 64, 4, true, true, T>, Is_dropout, Is_causal>(params, stream);

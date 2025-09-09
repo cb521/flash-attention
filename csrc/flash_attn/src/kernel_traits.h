@@ -173,7 +173,8 @@ struct Flash_bwd_kernel_traits : public Base {
     using SmemCopyAtomTransposed = typename Base::SmemCopyAtomTransposed;
 
     static constexpr bool Is_V_in_regs = false; //as we adjust the loop order, we don't need V in regs
-    static constexpr bool No_double_buffer = No_double_buffer_;
+    // static constexpr bool No_double_buffer = No_double_buffer_;
+    static constexpr bool No_double_buffer = true;
 
     // The number of threads.
     static constexpr int kNWarps = kNWarps_;
@@ -279,7 +280,7 @@ struct Flash_bwd_kernel_traits : public Base {
     static constexpr int kSmemQdOSize = size(SmemLayoutQdO{}) * (No_double_buffer ? 2 : 3) * sizeof(Element);
     static constexpr int kSmemKVSize = size(SmemLayoutKV{}) * 2 * sizeof(Element);
     static constexpr int kSmemdSSize = size(SmemLayoutPdS{}) * sizeof(Element);
-    static constexpr int kSmemPSize = size(SmemLayoutPdS{}) * sizeof(Element);
+    static constexpr int kSmemPSize = kHeadDim == 96 ? std::max(size(SmemLayoutPdS{}) * sizeof(Element), size(SmemLayoutKV{}) * sizeof(Element)) : size(SmemLayoutPdS{}) * sizeof(Element);
     static constexpr int kSmemdQSize = size(SmemLayoutdQ{}) * sizeof(Element);
     static constexpr int kSmemSize = kSmemQdOSize
         + (!Is_V_in_regs

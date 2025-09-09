@@ -1148,7 +1148,8 @@ def test_flash_attn_output(
 # @pytest.mark.parametrize('causal', [True])
 # @pytest.mark.parametrize("d", [32, 59, 64, 80, 96, 111, 128, 160, 192, 224, 256])
 # @pytest.mark.parametrize("d", [32, 64, 96, 128, 160, 192, 224, 256])
-@pytest.mark.parametrize('d', [32, 128]) #128, 256
+# @pytest.mark.parametrize('d', [32, 128]) #128, 256
+@pytest.mark.parametrize('d', [96])
 @pytest.mark.parametrize(
     "seqlen_q,seqlen_k",
     [
@@ -2700,6 +2701,8 @@ def latancy_test():
 
 
 if __name__ == "__main__":
+    #  pytest -k "test_flash_attn_varlen_output" -s tests/test_flash_attn.py
+    #  ncu --set full python3 tests/test_flash_attn.py
     fwd_time, bwd_time = latancy_test()
     print(f"fwd_time: {fwd_time} ms, bwd_time: {bwd_time} ms")
     
