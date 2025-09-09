@@ -158,12 +158,14 @@ inline __device__ void clear_dKVaccum(const Params &params) {
     const BlockInfo binfo(params, bidb);
     if (n_block * kBlockN >= binfo.actual_seqlen_k) return;
 
-    const index_t row_offset_dkv_accum = ((bidb * params.h_k + bidh) * params.seqlen_k_rounded + n_block * kBlockN) * params.d_rounded;
+    const index_t row_offset_dkv_accum = binfo.k_offset(params.seqlen_k_rounded * params.h * params.d_rounded, params.h * params.d_rounded, bidb) + (n_block * kBlockN + (params.cu_seqlens_k == nullptr ? 0 : 128ll * bidb)) * params.h * params.d_rounded + bidh * params.d_rounded;
 
     Tensor gdKaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.dk_accum_ptr) + row_offset_dkv_accum),
-                                  Shape<Int<kBlockN>, Int<kHeadDim>>{}, Stride<Int<kHeadDim>, _1>{});
+                                  Shape<Int<kBlockN>, Int<kHeadDim>>{}, 
+                                  make_stride(params.h * params.d_rounded, _1{}));
     Tensor gdVaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.dv_accum_ptr) + row_offset_dkv_accum),
-                                  Shape<Int<kBlockN>, Int<kHeadDim>>{}, Stride<Int<kHeadDim>, _1>{});
+                                  Shape<Int<kBlockN>, Int<kHeadDim>>{}, 
+                                  make_stride(params.h * params.d_rounded, _1{}));
 
     typename Kernel_traits::GmemTiledCopydQaccum gmem_tiled_copy_dKVaccum;
     auto gmem_thr_copy_dKVaccum = gmem_tiled_copy_dKVaccum.get_thread_slice(tidx);
@@ -294,8 +296,7 @@ inline __device__ void convert_dKV(const Params &params) {
         + n_block * kBlockN * params.dk_row_stride + bidh * params.dk_head_stride;
     const index_t row_offset_dv = binfo.k_offset(params.dv_batch_stride, params.dv_row_stride, bidb)
         + n_block * kBlockN * params.dv_row_stride + bidh * params.dv_head_stride;
-    const index_t row_offset_dkv_accum = ((bidb * params.h_k + bidh) * params.seqlen_k_rounded
-                                          + n_block * kBlockN) * params.d_rounded;
+    const index_t row_offset_dkv_accum = binfo.k_offset(params.seqlen_k_rounded * params.h * params.d_rounded, params.h * params.d_rounded, bidb) + (n_block * kBlockN + (params.cu_seqlens_k == nullptr ? 0 : 128ll * bidb)) * params.h * params.d_rounded + bidh * params.d_rounded;
 
     Tensor gdK = make_tensor(make_gmem_ptr(reinterpret_cast<Element *>(params.dk_ptr) + row_offset_dk),
                              Shape<Int<kBlockN>, Int<kHeadDim>>{},
@@ -305,10 +306,10 @@ inline __device__ void convert_dKV(const Params &params) {
                              make_stride(params.dv_row_stride, _1{}));
     Tensor gdKaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.dk_accum_ptr) + row_offset_dkv_accum),
                                   Shape<Int<kBlockN>, Int<kHeadDim>>{},
-                                  Stride<Int<kHeadDim>, _1>{});
+                                  make_stride(params.h * params.d_rounded, _1{}));
     Tensor gdVaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.dv_accum_ptr) + row_offset_dkv_accum),
                                   Shape<Int<kBlockN>, Int<kHeadDim>>{},
-                                  Stride<Int<kHeadDim>, _1>{});
+                                  make_stride(params.h * params.d_rounded, _1{}));
 
     Tensor sdK = make_tensor(make_smem_ptr(reinterpret_cast<Element *>(smem_)),
                              typename Kernel_traits::SmemLayoutdKV{});
